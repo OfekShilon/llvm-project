@@ -1,4 +1,4 @@
-//=== unittests/CodeGen/TBAAMetadataTest.cpp - Checks metadata generation -===//
+//=== unittests/CodeGen/NewStructPathTBAAMetadataTest.cpp - Checks metadata generation -===//
 //
 // Part of the LLVM Project, under the Apache License v2.0 with LLVM Exceptions.
 // See https://llvm.org/LICENSE.txt for license information.
@@ -24,32 +24,32 @@ namespace {
 struct TBAATestCompiler : public TestCompiler {
   TBAATestCompiler(clang::LangOptions LO, clang::CodeGenOptions CGO)
     : TestCompiler(LO, CGO) {}
-  static clang::CodeGenOptions getCommonCodeGenOpts() {
+  static clang::CodeGenOptions getCodeGenOpts() {
     clang::CodeGenOptions CGOpts;
     CGOpts.StructPathTBAA = 1;
-    CGOpts.NewStructPathTBAA = 0; 
+    CGOpts.NewStructPathTBAA = 1;  
     CGOpts.OptimizationLevel = 1;
     return CGOpts;
   }
 };
 
-auto OmnipotentCharC = MMTuple(
-  MMString("omnipotent char"),
-  MMTuple(
-    MMString("Simple C/C++ TBAA")),
-  MConstInt(0, 64)
-);
 
+auto RootC   = MMTuple(MMString("Simple C/C++ TBAA"));
+auto RootCXX = MMTuple(MMString("Simple C++ TBAA"));
 
-auto OmnipotentCharCXX = MMTuple(
-  MMString("omnipotent char"),
-  MMTuple(
-    MMString("Simple C++ TBAA")),
-  MConstInt(0, 64)
-);
+auto OmnipotentCharC   = MMTuple(RootC,   MConstInt(1, 64), MMString("omnipotent char"));
+auto OmnipotentCharCXX = MMTuple(RootCXX, MConstInt(1, 64), MMString("omnipotent char"));
 
+auto ShortC   = MMTuple(OmnipotentCharC,   MConstInt(2), MMString("short"));
+auto ShortCXX = MMTuple(OmnipotentCharCXX, MConstInt(2), MMString("short"));
+  
+auto IntC   = MMTuple(OmnipotentCharC,   MConstInt(4), MMString("int"));  
+auto IntCXX = MMTuple(OmnipotentCharCXX, MConstInt(4), MMString("int"));
+  
+auto LongLongC   = MMTuple(OmnipotentCharC,   MConstInt(8), MMString("long long"));
+auto LongLongCXX = MMTuple(OmnipotentCharCXX, MConstInt(8), MMString("long long"));
 
-TEST(TBAAMetadataTest, BasicTypes) {
+TEST(NewStructPathTBAAMetadataTest, BasicTypes) {
   const char TestProgram[] = R"**(
     void func(char *CP, short *SP, int *IP, long long *LP, void **VPP,
               int **IPP) {
@@ -63,7 +63,7 @@ TEST(TBAAMetadataTest, BasicTypes) {
   )**";
 
   clang::LangOptions LO;
-  TBAATestCompiler Compiler(LO, TBAATestCompiler::getCommonCodeGenOpts());
+  TBAATestCompiler Compiler(LO, TBAATestCompiler::getCodeGenOpts());
   Compiler.init(TestProgram);
   const BasicBlock *BB = Compiler.compile();
 
@@ -73,43 +73,38 @@ TEST(TBAAMetadataTest, BasicTypes) {
         MMTuple(
           OmnipotentCharC,
           MSameAs(0),
-          MConstInt(0))));
+          MConstInt(0),
+          MConstInt(1))));
   ASSERT_TRUE(I);
 
   I = matchNext(I,
       MInstruction(Instruction::Store,
         MConstInt(11, 16),
         MMTuple(
-          MMTuple(
-            MMString("short"),
-            OmnipotentCharC,
-            MConstInt(0)),
+          ShortC,
           MSameAs(0),
-          MConstInt(0))));
+          MConstInt(0),
+          MConstInt(2))));
   ASSERT_TRUE(I);
 
   I = matchNext(I,
       MInstruction(Instruction::Store,
         MConstInt(601, 32),
         MMTuple(
-          MMTuple(
-            MMString("int"),
-            OmnipotentCharC,
-            MConstInt(0)),
+          IntC,
           MSameAs(0),
-          MConstInt(0))));
+          MConstInt(0),
+          MConstInt(4))));
   ASSERT_TRUE(I);
 
   I = matchNext(I,
       MInstruction(Instruction::Store,
         MConstInt(604, 64),
         MMTuple(
-          MMTuple(
-            MMString("long long"),
-            OmnipotentCharC,
-            MConstInt(0)),
+          LongLongC,
           MSameAs(0),
-          MConstInt(0))));
+          MConstInt(0),
+          MConstInt(8))));
   ASSERT_TRUE(I);
 
   I = matchNext(I,
@@ -117,11 +112,12 @@ TEST(TBAAMetadataTest, BasicTypes) {
         MValType(Type::getInt8PtrTy(Compiler.Context)),
         MMTuple(
           MMTuple(
-            MMString("any pointer"),
             OmnipotentCharC,
-            MConstInt(0)),
+            MConstInt(8),
+            MMString("any pointer")),
           MSameAs(0),
-          MConstInt(0))));
+          MConstInt(0),
+          MConstInt(8))));
   ASSERT_TRUE(I);
 
   I = matchNext(I,
@@ -129,15 +125,16 @@ TEST(TBAAMetadataTest, BasicTypes) {
         MValType(Type::getInt32PtrTy(Compiler.Context)),
         MMTuple(
           MMTuple(
-            MMString("any pointer"),
             OmnipotentCharC,
-            MConstInt(0)),
+            MConstInt(8),
+            MMString("any pointer")),
           MSameAs(0),
-          MConstInt(0))));
+          MConstInt(0),
+          MConstInt(8))));
   ASSERT_TRUE(I);
 }
 
-TEST(TBAAMetadataTest, CFields) {
+TEST(NewStructPathTBAAMetadataTest, CFields) {
   const char TestProgram[] = R"**(
     struct ABC {
        short f16;
@@ -160,43 +157,41 @@ TEST(TBAAMetadataTest, CFields) {
 
   clang::LangOptions LO;
   LO.C11 = 1;
-  TBAATestCompiler Compiler(LO, TBAATestCompiler::getCommonCodeGenOpts());
+  TBAATestCompiler Compiler(LO, TBAATestCompiler::getCodeGenOpts());
   Compiler.init(TestProgram);
   const BasicBlock *BB = Compiler.compile();
 
+
   auto StructABC = MMTuple(
+    OmnipotentCharC,
+    MConstInt(32),
     MMString("ABC"),
-    MMTuple(
-      MMString("short"),
-      OmnipotentCharC,
-      MConstInt(0)),
+    ShortC,
     MConstInt(0),
-    MMTuple(
-      MMString("int"),
-      OmnipotentCharC,
-      MConstInt(0)),
+    MConstInt(2),
+    IntC,
     MConstInt(4),
-    MMTuple(
-      MMString("long long"),
-      OmnipotentCharC,
-      MConstInt(0)),
+    MConstInt(4),
+    LongLongC,
     MConstInt(8),
-    MSameAs(1),
-    MConstInt(16),
+    MConstInt(8),
     MSameAs(3),
+    MConstInt(16),
+    MConstInt(2),
+    MSameAs(6),
     MConstInt(20),
-    MSameAs(5),
-    MConstInt(24));
+    MConstInt(4),
+    MSameAs(9),
+    MConstInt(24),
+    MConstInt(8));
 
   const Instruction *I = match(BB,
       MInstruction(Instruction::Store,
         MConstInt(4, 32),
         MMTuple(
           StructABC,
-          MMTuple(
-            MMString("int"),
-            OmnipotentCharC,
-            MConstInt(0)),
+          IntC,
+          MConstInt(4),
           MConstInt(4))));
   ASSERT_TRUE(I);
 
@@ -205,11 +200,9 @@ TEST(TBAAMetadataTest, CFields) {
         MConstInt(11, 16),
         MMTuple(
           StructABC,
-          MMTuple(
-            MMString("short"),
-            OmnipotentCharC,
-            MConstInt(0)),
-          MConstInt(0))));
+          ShortC,
+          MConstInt(0),
+          MConstInt(2))));
   ASSERT_TRUE(I);
 
   I = matchNext(I,
@@ -217,10 +210,8 @@ TEST(TBAAMetadataTest, CFields) {
         MConstInt(601, 64),
         MMTuple(
           StructABC,
-          MMTuple(
-            MMString("long long"),
-            OmnipotentCharC,
-            MConstInt(0)),
+          LongLongC,
+          MConstInt(8),
           MConstInt(8))));
   ASSERT_TRUE(I);
 
@@ -229,11 +220,9 @@ TEST(TBAAMetadataTest, CFields) {
         MConstInt(22, 16),
         MMTuple(
           StructABC,
-          MMTuple(
-            MMString("short"),
-            OmnipotentCharC,
-            MConstInt(0)),
-          MConstInt(16))));
+          ShortC,
+          MConstInt(16),
+          MConstInt(2))));
   ASSERT_TRUE(I);
 
   I = matchNext(I,
@@ -241,11 +230,9 @@ TEST(TBAAMetadataTest, CFields) {
         MConstInt(77, 32),
         MMTuple(
           StructABC,
-          MMTuple(
-            MMString("int"),
-            OmnipotentCharC,
-            MConstInt(0)),
-          MConstInt(20))));
+          IntC,
+          MConstInt(20),
+          MConstInt(4))));
   ASSERT_TRUE(I);
 
   I = matchNext(I,
@@ -253,15 +240,13 @@ TEST(TBAAMetadataTest, CFields) {
         MConstInt(604, 64),
         MMTuple(
           StructABC,
-          MMTuple(
-            MMString("long long"),
-            OmnipotentCharC,
-            MConstInt(0)),
-          MConstInt(24))));
+          LongLongC,
+          MConstInt(24),
+          MConstInt(8))));
   ASSERT_TRUE(I);
 }
 
-TEST(TBAAMetadataTest, CTypedefFields) {
+TEST(NewStructPathTBAAMetadataTest, CTypedefFields) {
   const char TestProgram[] = R"**(
     typedef struct {
        short f16;
@@ -282,21 +267,19 @@ TEST(TBAAMetadataTest, CTypedefFields) {
 
   clang::LangOptions LO;
   LO.C11 = 1;
-  TBAATestCompiler Compiler(LO, TBAATestCompiler::getCommonCodeGenOpts());
+  TBAATestCompiler Compiler(LO, TBAATestCompiler::getCodeGenOpts());
   Compiler.init(TestProgram);
   const BasicBlock *BB = Compiler.compile();
 
   auto NamelessStruct = MMTuple(
+    OmnipotentCharC,
+    MConstInt(8),
     MMString(""),
-    MMTuple(
-      MMString("short"),
-      OmnipotentCharC,
-      MConstInt(0)),
+    ShortC,
     MConstInt(0),
-    MMTuple(
-      MMString("int"),
-      OmnipotentCharC,
-      MConstInt(0)),
+    MConstInt(2),
+    IntC,
+    MConstInt(4),
     MConstInt(4));
 
   const Metadata *MetaABC = nullptr;
@@ -305,10 +288,8 @@ TEST(TBAAMetadataTest, CTypedefFields) {
         MConstInt(4, 32),
         MMTuple(
           MMSave(MetaABC, NamelessStruct),
-          MMTuple(
-            MMString("int"),
-            OmnipotentCharC,
-            MConstInt(0)),
+          IntC,
+          MConstInt(4),
           MConstInt(4))));
   ASSERT_TRUE(I);
 
@@ -317,11 +298,9 @@ TEST(TBAAMetadataTest, CTypedefFields) {
         MConstInt(11, 16),
         MMTuple(
           NamelessStruct,
-          MMTuple(
-            MMString("short"),
-            OmnipotentCharC,
-            MConstInt(0)),
-          MConstInt(0))));
+          ShortC,
+          MConstInt(0),
+          MConstInt(2))));
   ASSERT_TRUE(I);
 
   const Metadata *MetaCDE = nullptr;
@@ -330,10 +309,8 @@ TEST(TBAAMetadataTest, CTypedefFields) {
         MConstInt(44, 32),
         MMTuple(
           MMSave(MetaCDE, NamelessStruct),
-          MMTuple(
-            MMString("int"),
-            OmnipotentCharC,
-            MConstInt(0)),
+          IntC,
+          MConstInt(4),
           MConstInt(4))));
   ASSERT_TRUE(I);
 
@@ -342,11 +319,9 @@ TEST(TBAAMetadataTest, CTypedefFields) {
         MConstInt(111, 16),
         MMTuple(
           NamelessStruct,
-          MMTuple(
-            MMString("short"),
-            OmnipotentCharC,
-            MConstInt(0)),
-          MConstInt(0))));
+          ShortC,
+          MConstInt(0),
+          MConstInt(2))));
   ASSERT_TRUE(I);
 
   // FIXME: Nameless structures used in definitions of 'ABC' and 'CDE' are
@@ -354,7 +329,7 @@ TEST(TBAAMetadataTest, CTypedefFields) {
   //ASSERT_TRUE(MetaABC != MetaCDE);
 }
 
-TEST(TBAAMetadataTest, CTypedefFields2) {
+TEST(NewStructPathTBAAMetadataTest, CTypedefFields2) {
   const char TestProgram[] = R"**(
     typedef struct {
        short f16;
@@ -375,21 +350,19 @@ TEST(TBAAMetadataTest, CTypedefFields2) {
 
   clang::LangOptions LO;
   LO.C11 = 1;
-  TBAATestCompiler Compiler(LO, TBAATestCompiler::getCommonCodeGenOpts());
+  TBAATestCompiler Compiler(LO, TBAATestCompiler::getCodeGenOpts());
   Compiler.init(TestProgram);
   const BasicBlock *BB = Compiler.compile();
 
-  auto NamelessStruct = MMTuple(
+    auto NamelessStruct = MMTuple(
+    OmnipotentCharC,
+    MConstInt(8),
     MMString(""),
-    MMTuple(
-      MMString("short"),
-      OmnipotentCharC,
-      MConstInt(0)),
+    ShortC,
     MConstInt(0),
-    MMTuple(
-      MMString("int"),
-      OmnipotentCharC,
-      MConstInt(0)),
+    MConstInt(2),
+    IntC,
+    MConstInt(4),
     MConstInt(4));
 
   const Metadata *MetaABC = nullptr;
@@ -398,10 +371,8 @@ TEST(TBAAMetadataTest, CTypedefFields2) {
         MConstInt(4, 32),
         MMTuple(
           MMSave(MetaABC, NamelessStruct),
-          MMTuple(
-            MMString("int"),
-            OmnipotentCharC,
-            MConstInt(0)),
+          IntC,
+          MConstInt(4),
           MConstInt(4))));
   ASSERT_TRUE(I);
 
@@ -410,11 +381,9 @@ TEST(TBAAMetadataTest, CTypedefFields2) {
         MConstInt(11, 16),
         MMTuple(
           NamelessStruct,
-          MMTuple(
-            MMString("short"),
-            OmnipotentCharC,
-            MConstInt(0)),
-          MConstInt(0))));
+          ShortC,
+          MConstInt(0),
+          MConstInt(2))));
   ASSERT_TRUE(I);
 
   const Metadata *MetaCDE = nullptr;
@@ -423,10 +392,8 @@ TEST(TBAAMetadataTest, CTypedefFields2) {
         MConstInt(44, 32),
         MMTuple(
           MMSave(MetaCDE, NamelessStruct),
-          MMTuple(
-            MMString("int"),
-            OmnipotentCharC,
-            MConstInt(0)),
+          IntC,
+          MConstInt(4),
           MConstInt(4))));
   ASSERT_TRUE(I);
 
@@ -435,11 +402,9 @@ TEST(TBAAMetadataTest, CTypedefFields2) {
         MConstInt(111, 16),
         MMTuple(
           NamelessStruct,
-          MMTuple(
-            MMString("short"),
-            OmnipotentCharC,
-            MConstInt(0)),
-          MConstInt(0))));
+          ShortC,
+          MConstInt(0),
+          MConstInt(2))));
   ASSERT_TRUE(I);
 
   // FIXME: Nameless structures used in definitions of 'ABC' and 'CDE' are
@@ -448,7 +413,7 @@ TEST(TBAAMetadataTest, CTypedefFields2) {
   //ASSERT_TRUE(MetaABC != MetaCDE);
 }
 
-TEST(TBAAMetadataTest, CTypedefFields3) {
+TEST(NewStructPathTBAAMetadataTest, CTypedefFields3) {
   const char TestProgram[] = R"**(
     typedef struct {
        short f16;
@@ -469,45 +434,39 @@ TEST(TBAAMetadataTest, CTypedefFields3) {
 
   clang::LangOptions LO;
   LO.C11 = 1;
-  TBAATestCompiler Compiler(LO, TBAATestCompiler::getCommonCodeGenOpts());
+  TBAATestCompiler Compiler(LO, TBAATestCompiler::getCodeGenOpts());
   Compiler.init(TestProgram);
   const BasicBlock *BB = Compiler.compile();
 
   auto NamelessStruct1 = MMTuple(
+    OmnipotentCharC,
+    MConstInt(8),
     MMString(""),
-    MMTuple(
-      MMString("short"),
-      OmnipotentCharC,
-      MConstInt(0)),
+    ShortC,
     MConstInt(0),
-    MMTuple(
-      MMString("int"),
-      OmnipotentCharC,
-      MConstInt(0)),
+    MConstInt(2),
+    IntC,
+    MConstInt(4),
     MConstInt(4));
 
   auto NamelessStruct2 = MMTuple(
+    OmnipotentCharC,
+    MConstInt(8),
     MMString(""),
-    MMTuple(
-      MMString("int"),
-      OmnipotentCharC,
-      MConstInt(0)),
+    IntC,
     MConstInt(0),
-    MMTuple(
-      MMString("short"),
-      OmnipotentCharC,
-      MConstInt(0)),
-    MConstInt(4));
+    MConstInt(4),
+    ShortC,
+    MConstInt(4),
+    MConstInt(2));
 
   const Instruction *I = match(BB,
       MInstruction(Instruction::Store,
         MConstInt(4, 32),
         MMTuple(
           NamelessStruct1,
-          MMTuple(
-            MMString("int"),
-            OmnipotentCharC,
-            MConstInt(0)),
+          IntC,
+          MConstInt(4),
           MConstInt(4))));
   ASSERT_TRUE(I);
 
@@ -516,11 +475,9 @@ TEST(TBAAMetadataTest, CTypedefFields3) {
         MConstInt(11, 16),
         MMTuple(
           NamelessStruct1,
-          MMTuple(
-            MMString("short"),
-            OmnipotentCharC,
-            MConstInt(0)),
-          MConstInt(0))));
+          ShortC,
+          MConstInt(0),
+          MConstInt(2))));
   ASSERT_TRUE(I);
 
   I = matchNext(I,
@@ -528,11 +485,9 @@ TEST(TBAAMetadataTest, CTypedefFields3) {
         MConstInt(44, 32),
         MMTuple(
           NamelessStruct2,
-          MMTuple(
-            MMString("int"),
-            OmnipotentCharC,
-            MConstInt(0)),
-          MConstInt(0))));
+          IntC,
+          MConstInt(0),
+          MConstInt(4))));
   ASSERT_TRUE(I);
 
   I = matchNext(I,
@@ -540,15 +495,13 @@ TEST(TBAAMetadataTest, CTypedefFields3) {
         MConstInt(111, 16),
         MMTuple(
           NamelessStruct2,
-          MMTuple(
-            MMString("short"),
-            OmnipotentCharC,
-            MConstInt(0)),
-          MConstInt(4))));
+          ShortC,
+          MConstInt(4),
+          MConstInt(2))));
   ASSERT_TRUE(I);
 }
 
-TEST(TBAAMetadataTest, CXXFields) {
+TEST(NewStructPathTBAAMetadataTest, CXXFields) {
   const char TestProgram[] = R"**(
     struct ABC {
        short f16;
@@ -572,43 +525,40 @@ TEST(TBAAMetadataTest, CXXFields) {
   clang::LangOptions LO;
   LO.CPlusPlus = 1;
   LO.CPlusPlus11 = 1;
-  TBAATestCompiler Compiler(LO, TBAATestCompiler::getCommonCodeGenOpts());
+  TBAATestCompiler Compiler(LO, TBAATestCompiler::getCodeGenOpts());
   Compiler.init(TestProgram);
   const BasicBlock *BB = Compiler.compile();
 
   auto StructABC = MMTuple(
+    OmnipotentCharCXX,
+    MConstInt(32), 
     MMString("_ZTS3ABC"),
-    MMTuple(
-      MMString("short"),
-      OmnipotentCharCXX,
-      MConstInt(0)),
+    ShortCXX,
     MConstInt(0),
-    MMTuple(
-      MMString("int"),
-      OmnipotentCharCXX,
-      MConstInt(0)),
+    MConstInt(2),
+    IntCXX,
     MConstInt(4),
-    MMTuple(
-      MMString("long long"),
-      OmnipotentCharCXX,
-      MConstInt(0)),
+    MConstInt(4),
+    LongLongCXX,
     MConstInt(8),
-    MSameAs(1),
+    MConstInt(8),
+    ShortCXX,
     MConstInt(16),
-    MSameAs(3),
+    MConstInt(2),
+    IntCXX,
     MConstInt(20),
-    MSameAs(5),
-    MConstInt(24));
+    MConstInt(4),
+    LongLongCXX,
+    MConstInt(24),
+    MConstInt(8));
 
   const Instruction *I = match(BB,
       MInstruction(Instruction::Store,
         MConstInt(4, 32),
         MMTuple(
           StructABC,
-          MMTuple(
-            MMString("int"),
-            OmnipotentCharCXX,
-            MConstInt(0)),
+          IntCXX,
+          MConstInt(4),
           MConstInt(4))));
   ASSERT_TRUE(I);
 
@@ -617,11 +567,9 @@ TEST(TBAAMetadataTest, CXXFields) {
         MConstInt(11, 16),
         MMTuple(
           StructABC,
-          MMTuple(
-            MMString("short"),
-            OmnipotentCharCXX,
-            MConstInt(0)),
-          MConstInt(0))));
+          ShortCXX,
+          MConstInt(0),
+          MConstInt(2))));
   ASSERT_TRUE(I);
 
   I = matchNext(I,
@@ -629,10 +577,8 @@ TEST(TBAAMetadataTest, CXXFields) {
         MConstInt(601, 64),
         MMTuple(
           StructABC,
-          MMTuple(
-            MMString("long long"),
-            OmnipotentCharCXX,
-            MConstInt(0)),
+          LongLongCXX,
+          MConstInt(8),
           MConstInt(8))));
   ASSERT_TRUE(I);
 
@@ -641,11 +587,9 @@ TEST(TBAAMetadataTest, CXXFields) {
         MConstInt(22, 16),
         MMTuple(
           StructABC,
-          MMTuple(
-            MMString("short"),
-            OmnipotentCharCXX,
-            MConstInt(0)),
-          MConstInt(16))));
+          ShortCXX,
+          MConstInt(16),
+          MConstInt(2))));
   ASSERT_TRUE(I);
 
   I = matchNext(I,
@@ -653,11 +597,9 @@ TEST(TBAAMetadataTest, CXXFields) {
         MConstInt(77, 32),
         MMTuple(
           StructABC,
-          MMTuple(
-            MMString("int"),
-            OmnipotentCharCXX,
-            MConstInt(0)),
-          MConstInt(20))));
+          IntCXX,
+          MConstInt(20),
+          MConstInt(4))));
   ASSERT_TRUE(I);
 
   I = matchNext(I,
@@ -665,15 +607,13 @@ TEST(TBAAMetadataTest, CXXFields) {
         MConstInt(604, 64),
         MMTuple(
           StructABC,
-          MMTuple(
-            MMString("long long"),
-            OmnipotentCharCXX,
-            MConstInt(0)),
-          MConstInt(24))));
+          LongLongCXX,
+          MConstInt(24),
+          MConstInt(8))));
   ASSERT_TRUE(I);
 }
 
-TEST(TBAAMetadataTest, CXXTypedefFields) {
+TEST(NewStructPathTBAAMetadataTest, CXXTypedefFields) {
   const char TestProgram[] = R"**(
     typedef struct {
        short f16;
@@ -695,34 +635,30 @@ TEST(TBAAMetadataTest, CXXTypedefFields) {
   clang::LangOptions LO;
   LO.CPlusPlus = 1;
   LO.CPlusPlus11 = 1;
-  TBAATestCompiler Compiler(LO, TBAATestCompiler::getCommonCodeGenOpts());
+  TBAATestCompiler Compiler(LO, TBAATestCompiler::getCodeGenOpts());
   Compiler.init(TestProgram);
   const BasicBlock *BB = Compiler.compile();
 
   auto StructABC = MMTuple(
+    OmnipotentCharCXX, 
+    MConstInt(8),
     MMString("_ZTS3ABC"),
-    MMTuple(
-      MMString("short"),
-      OmnipotentCharCXX,
-      MConstInt(0)),
+    ShortCXX,
     MConstInt(0),
-    MMTuple(
-      MMString("int"),
-      OmnipotentCharCXX,
-      MConstInt(0)),
+    MConstInt(2),
+    IntCXX,
+    MConstInt(4),
     MConstInt(4));
 
   auto StructCDE = MMTuple(
+    OmnipotentCharCXX, 
+    MConstInt(8),
     MMString("_ZTS3CDE"),
-    MMTuple(
-      MMString("short"),
-      OmnipotentCharCXX,
-      MConstInt(0)),
+    ShortCXX,
     MConstInt(0),
-    MMTuple(
-      MMString("int"),
-      OmnipotentCharCXX,
-      MConstInt(0)),
+    MConstInt(2),
+    IntCXX,
+    MConstInt(4),
     MConstInt(4));
 
   const Instruction *I = match(BB,
@@ -730,10 +666,8 @@ TEST(TBAAMetadataTest, CXXTypedefFields) {
         MConstInt(4, 32),
         MMTuple(
           StructABC,
-          MMTuple(
-            MMString("int"),
-            OmnipotentCharCXX,
-            MConstInt(0)),
+          IntCXX,
+          MConstInt(4),
           MConstInt(4))));
   ASSERT_TRUE(I);
 
@@ -742,11 +676,9 @@ TEST(TBAAMetadataTest, CXXTypedefFields) {
         MConstInt(11, 16),
         MMTuple(
           StructABC,
-          MMTuple(
-            MMString("short"),
-            OmnipotentCharCXX,
-            MConstInt(0)),
-          MConstInt(0))));
+          ShortCXX,
+          MConstInt(0),
+          MConstInt(2))));
   ASSERT_TRUE(I);
 
   I = matchNext(I,
@@ -754,10 +686,8 @@ TEST(TBAAMetadataTest, CXXTypedefFields) {
         MConstInt(44, 32),
         MMTuple(
           StructCDE,
-          MMTuple(
-            MMString("int"),
-            OmnipotentCharCXX,
-            MConstInt(0)),
+          IntCXX,
+          MConstInt(4),
           MConstInt(4))));
   ASSERT_TRUE(I);
 
@@ -766,15 +696,13 @@ TEST(TBAAMetadataTest, CXXTypedefFields) {
         MConstInt(111, 16),
         MMTuple(
           StructCDE,
-          MMTuple(
-            MMString("short"),
-            OmnipotentCharCXX,
-            MConstInt(0)),
-          MConstInt(0))));
+          ShortCXX,
+          MConstInt(0),
+          MConstInt(2))));
   ASSERT_TRUE(I);
 }
 
-TEST(TBAAMetadataTest, StructureFields) {
+TEST(NewStructPathTBAAMetadataTest, StructureFields) {
   const char TestProgram[] = R"**(
     struct Inner {
       int f32;
@@ -796,40 +724,40 @@ TEST(TBAAMetadataTest, StructureFields) {
   clang::LangOptions LO;
   LO.CPlusPlus = 1;
   LO.CPlusPlus11 = 1;
-  TBAATestCompiler Compiler(LO, TBAATestCompiler::getCommonCodeGenOpts());
+  TBAATestCompiler Compiler(LO, TBAATestCompiler::getCodeGenOpts());
   Compiler.init(TestProgram);
   const BasicBlock *BB = Compiler.compile();
 
   auto StructInner = MMTuple(
+    OmnipotentCharCXX,
+    MConstInt(4),
     MMString("_ZTS5Inner"),
-    MMTuple(
-      MMString("int"),
-      OmnipotentCharCXX,
-      MConstInt(0)),
-    MConstInt(0));
+    IntCXX,
+    MConstInt(0),
+    MConstInt(4));
 
   auto StructOuter = MMTuple(
+    OmnipotentCharCXX,
+    MConstInt(12),
     MMString("_ZTS5Outer"),
-    MMTuple(
-      MMString("short"),
-      OmnipotentCharCXX,
-      MConstInt(0)),
+    ShortCXX,
     MConstInt(0),
+    MConstInt(2),
     StructInner,
     MConstInt(4),
-    MSameAs(3),
-    MConstInt(8));
+    MConstInt(4),
+    StructInner,
+    MConstInt(8),
+    MConstInt(4));
 
   const Instruction *I = match(BB,
       MInstruction(Instruction::Store,
         MConstInt(14, 16),
         MMTuple(
           StructOuter,
-          MMTuple(
-            MMString("short"),
-            OmnipotentCharCXX,
-            MConstInt(0)),
-          MConstInt(0))));
+          ShortCXX,
+          MConstInt(0),
+          MConstInt(2))));
   ASSERT_TRUE(I);
 
   I = matchNext(I,
@@ -837,10 +765,8 @@ TEST(TBAAMetadataTest, StructureFields) {
         MConstInt(35, 32),
         MMTuple(
           StructOuter,
-          MMTuple(
-            MMString("int"),
-            OmnipotentCharCXX,
-            MConstInt(0)),
+          IntCXX,
+          MConstInt(4),
           MConstInt(4))));
   ASSERT_TRUE(I);
 
@@ -849,15 +775,13 @@ TEST(TBAAMetadataTest, StructureFields) {
         MConstInt(77, 32),
         MMTuple(
           StructOuter,
-          MMTuple(
-            MMString("int"),
-            OmnipotentCharCXX,
-            MConstInt(0)),
-          MConstInt(8))));
+          IntCXX,
+          MConstInt(8),
+          MConstInt(4))));
   ASSERT_TRUE(I);
 }
 
-TEST(TBAAMetadataTest, ArrayFields) {
+TEST(NewStructPathTBAAMetadataTest, ArrayFields) {
   const char TestProgram[] = R"**(
     struct Inner {
       int f32;
@@ -878,38 +802,37 @@ TEST(TBAAMetadataTest, ArrayFields) {
   clang::LangOptions LO;
   LO.CPlusPlus = 1;
   LO.CPlusPlus11 = 1;
-  TBAATestCompiler Compiler(LO, TBAATestCompiler::getCommonCodeGenOpts());
+  TBAATestCompiler Compiler(LO, TBAATestCompiler::getCodeGenOpts());
   Compiler.init(TestProgram);
   const BasicBlock *BB = Compiler.compile();
 
   auto StructInner = MMTuple(
+    OmnipotentCharCXX,
+    MConstInt(4),
     MMString("_ZTS5Inner"),
-    MMTuple(
-      MMString("int"),
-      OmnipotentCharCXX,
-      MConstInt(0)),
-    MConstInt(0));
+    IntCXX,
+    MConstInt(0),
+    MConstInt(4));
 
   auto StructOuter = MMTuple(
+    OmnipotentCharCXX,
+    MConstInt(12),
     MMString("_ZTS5Outer"),
-    MMTuple(
-      MMString("short"),
-      OmnipotentCharCXX,
-      MConstInt(0)),
+    ShortCXX,
     MConstInt(0),
-    OmnipotentCharCXX,    // FIXME: Info about array field is lost.
-    MConstInt(4));
+    MConstInt(2),
+    StructInner,
+    MConstInt(4),
+    MConstInt(8));
 
   const Instruction *I = match(BB,
       MInstruction(Instruction::Store,
         MConstInt(14, 16),
         MMTuple(
           StructOuter,
-          MMTuple(
-            MMString("short"),
-            OmnipotentCharCXX,
-            MConstInt(0)),
-          MConstInt(0))));
+          ShortCXX,
+          MConstInt(0),
+          MConstInt(2))));
   ASSERT_TRUE(I);
 
   I = matchNext(I,
@@ -917,11 +840,9 @@ TEST(TBAAMetadataTest, ArrayFields) {
         MConstInt(35, 32),
         MMTuple(
           StructInner,
-          MMTuple(
-            MMString("int"),
-            OmnipotentCharCXX,
-            MConstInt(0)),
-          MConstInt(0))));
+          IntCXX,
+          MConstInt(0),
+          MConstInt(4))));
   ASSERT_TRUE(I);
 
   I = matchNext(I,
@@ -929,15 +850,13 @@ TEST(TBAAMetadataTest, ArrayFields) {
         MConstInt(77, 32),
         MMTuple(
           StructInner,
-          MMTuple(
-            MMString("int"),
-            OmnipotentCharCXX,
-            MConstInt(0)),
-          MConstInt(0))));
+          IntCXX,
+          MConstInt(0),
+          MConstInt(4))));
   ASSERT_TRUE(I);
 }
 
-TEST(TBAAMetadataTest, BaseClass) {
+TEST(NewStructPathTBAAMetadataTest, BaseClass) {
   const char TestProgram[] = R"**(
     struct Base {
       int f32;
@@ -957,33 +876,37 @@ TEST(TBAAMetadataTest, BaseClass) {
   clang::LangOptions LO;
   LO.CPlusPlus = 1;
   LO.CPlusPlus11 = 1;
-  TBAATestCompiler Compiler(LO, TBAATestCompiler::getCommonCodeGenOpts());
+  TBAATestCompiler Compiler(LO, TBAATestCompiler::getCodeGenOpts());
   Compiler.init(TestProgram);
   const BasicBlock *BB = Compiler.compile();
 
   auto ClassBase = MMTuple(
+    OmnipotentCharCXX,
+    MConstInt(4),
     MMString("_ZTS4Base"),
-    MMTuple(
-      MMString("int"),
-      OmnipotentCharCXX,
-      MConstInt(0)),
-    MConstInt(0));
+    IntCXX,
+    MConstInt(0),
+    MConstInt(4));
 
-  auto ClassDerived =
-      MMTuple(MMString("_ZTS7Derived"), ClassBase, MConstInt(0),
-              MMTuple(MMString("short"), OmnipotentCharCXX, MConstInt(0)),
-              MConstInt(4));
+  auto ClassDerived = MMTuple(
+    OmnipotentCharCXX,
+    MConstInt(8),
+    MMString("_ZTS7Derived"), 
+    ClassBase, 
+    MConstInt(0),
+    MConstInt(4),
+    ShortCXX,
+    MConstInt(4),
+    MConstInt(2));
 
   const Instruction *I = match(BB,
       MInstruction(Instruction::Store,
         MConstInt(14, 32),
         MMTuple(
           ClassBase,
-          MMTuple(
-            MMString("int"),
-            OmnipotentCharCXX,
-            MConstInt(0)),
-          MConstInt(0))));
+          IntCXX,
+          MConstInt(0),
+          MConstInt(4))));
   ASSERT_TRUE(I);
 
   I = matchNext(I,
@@ -991,11 +914,9 @@ TEST(TBAAMetadataTest, BaseClass) {
         MConstInt(35, 16),
         MMTuple(
           ClassDerived,
-          MMTuple(
-            MMString("short"),
-            OmnipotentCharCXX,
-            MConstInt(0)),
-          MConstInt(4))));
+          ShortCXX,
+          MConstInt(4),
+          MConstInt(2))));
   ASSERT_TRUE(I);
 
   I = matchNext(I,
@@ -1003,15 +924,13 @@ TEST(TBAAMetadataTest, BaseClass) {
         MConstInt(77, 32),
         MMTuple(
           ClassBase,
-          MMTuple(
-            MMString("int"),
-            OmnipotentCharCXX,
-            MConstInt(0)),
-          MConstInt(0))));
+          IntCXX,
+          MConstInt(0),
+          MConstInt(4))));
   ASSERT_TRUE(I);
 }
 
-TEST(TBAAMetadataTest, PolymorphicClass) {
+TEST(NewStructPathTBAAMetadataTest, PolymorphicClass) {
   const char TestProgram[] = R"**(
     struct Base {
       virtual void m1(int *) = 0;
@@ -1033,33 +952,37 @@ TEST(TBAAMetadataTest, PolymorphicClass) {
   clang::LangOptions LO;
   LO.CPlusPlus = 1;
   LO.CPlusPlus11 = 1;
-  TBAATestCompiler Compiler(LO, TBAATestCompiler::getCommonCodeGenOpts());
+  TBAATestCompiler Compiler(LO, TBAATestCompiler::getCodeGenOpts());
   Compiler.init(TestProgram);
   const BasicBlock *BB = Compiler.compile();
 
   auto ClassBase = MMTuple(
+    OmnipotentCharCXX,
+    MConstInt(16),
     MMString("_ZTS4Base"),
-    MMTuple(
-      MMString("int"),
-      OmnipotentCharCXX,
-      MConstInt(0)),
-    MConstInt(Compiler.PtrSize));
+    IntCXX,
+    MConstInt(Compiler.PtrSize),
+    MConstInt(4));
 
-  auto ClassDerived =
-      MMTuple(MMString("_ZTS7Derived"), ClassBase, MConstInt(0),
-              MMTuple(MMString("short"), OmnipotentCharCXX, MConstInt(0)),
-              MConstInt(Compiler.PtrSize + 4));
+  auto ClassDerived = MMTuple(
+    OmnipotentCharCXX,
+    MConstInt(16),
+    MMString("_ZTS7Derived"), 
+    ClassBase, 
+    MConstInt(0),
+    MConstInt(12),
+    ShortCXX,
+    MConstInt(Compiler.PtrSize + 4),
+    MConstInt(2));
 
   const Instruction *I = match(BB,
       MInstruction(Instruction::Store,
         MConstInt(14, 32),
         MMTuple(
           ClassBase,
-          MMTuple(
-            MMString("int"),
-            OmnipotentCharCXX,
-            MConstInt(0)),
-          MConstInt(Compiler.PtrSize))));
+          IntCXX,
+          MConstInt(Compiler.PtrSize),
+          MConstInt(4))));
   ASSERT_TRUE(I);
 
   I = matchNext(I,
@@ -1067,11 +990,9 @@ TEST(TBAAMetadataTest, PolymorphicClass) {
         MConstInt(35, 16),
         MMTuple(
           ClassDerived,
-          MMTuple(
-            MMString("short"),
-            OmnipotentCharCXX,
-            MConstInt(0)),
-          MConstInt(Compiler.PtrSize + 4))));
+          ShortCXX,
+          MConstInt(Compiler.PtrSize + 4),
+          MConstInt(2))));
   ASSERT_TRUE(I);
 
   I = matchNext(I,
@@ -1079,15 +1000,13 @@ TEST(TBAAMetadataTest, PolymorphicClass) {
         MConstInt(77, 32),
         MMTuple(
           ClassBase,
-          MMTuple(
-            MMString("int"),
-            OmnipotentCharCXX,
-            MConstInt(0)),
-          MConstInt(Compiler.PtrSize))));
+          IntCXX,
+          MConstInt(Compiler.PtrSize),
+          MConstInt(4))));
   ASSERT_TRUE(I);
 }
 
-TEST(TBAAMetadataTest, VirtualBase) {
+TEST(NewStructPathTBAAMetadataTest, VirtualBase) {
   const char TestProgram[] = R"**(
     struct Base {
       int f32;
@@ -1107,24 +1026,21 @@ TEST(TBAAMetadataTest, VirtualBase) {
   clang::LangOptions LO;
   LO.CPlusPlus = 1;
   LO.CPlusPlus11 = 1;
-  TBAATestCompiler Compiler(LO, TBAATestCompiler::getCommonCodeGenOpts());
+  TBAATestCompiler Compiler(LO, TBAATestCompiler::getCodeGenOpts());
   Compiler.init(TestProgram);
   const BasicBlock *BB = Compiler.compile();
 
   auto ClassBase = MMTuple(
+    OmnipotentCharCXX,
+    MConstInt(4),
     MMString("_ZTS4Base"),
-    MMTuple(
-      MMString("int"),
-      OmnipotentCharCXX,
-      MConstInt(0)),
-    MConstInt(0));
+    IntCXX,
+    MConstInt(0),
+    MConstInt(4));
 
-  auto ClassDerived = MMTuple(
+  auto ClassDerived = MMTuple(    // <--- !!
     MMString("_ZTS7Derived"),
-    MMTuple(
-      MMString("short"),
-      OmnipotentCharCXX,
-      MConstInt(0)),
+    ShortC,
     MConstInt(Compiler.PtrSize));
 
   const Instruction *I = match(BB,
@@ -1132,35 +1048,32 @@ TEST(TBAAMetadataTest, VirtualBase) {
         MConstInt(14, 32),
         MMTuple(
           ClassBase,
-          MMTuple(
-            MMString("int"),
-            OmnipotentCharCXX,
-            MConstInt(0)),
-          MConstInt(0))));
+          IntCXX,
+          MConstInt(0),
+          MConstInt(4))));
   ASSERT_TRUE(I);
 
   I = matchNext(I,
       MInstruction(Instruction::Store,
         MConstInt(35, 16),
         MMTuple(
-          ClassDerived,
-          MMTuple(
-            MMString("short"),
-            OmnipotentCharCXX,
-            MConstInt(0)),
-          MConstInt(Compiler.PtrSize))));
+          ShortCXX, //  ClassDerived,  <--- !!
+          ShortCXX,
+          MConstInt(0),
+          MConstInt(2))));
+          // MConstInt(Compiler.PtrSize))));
   ASSERT_TRUE(I);
 
   I = matchNext(I,
       MInstruction(Instruction::Load,
         MMTuple(
           MMTuple(
-            MMString("vtable pointer"),
-            MMTuple(
-              MMString("Simple C++ TBAA")),
-            MConstInt(0)),
+            RootCXX,
+            MConstInt(8),
+            MMString("vtable pointer")),
           MSameAs(0),
-          MConstInt(0))));
+          MConstInt(0),
+          MConstInt(8))));
   ASSERT_TRUE(I);
 
   I = matchNext(I,
@@ -1168,15 +1081,13 @@ TEST(TBAAMetadataTest, VirtualBase) {
         MConstInt(77, 32),
         MMTuple(
           ClassBase,
-          MMTuple(
-            MMString("int"),
-            OmnipotentCharCXX,
-            MConstInt(0)),
-          MConstInt(0))));
+          IntCXX,
+          MConstInt(0),
+          MConstInt(4))));
   ASSERT_TRUE(I);
 }
 
-TEST(TBAAMetadataTest, TemplSpec) {
+TEST(NewStructPathTBAAMetadataTest, TemplSpec) {
   const char TestProgram[] = R"**(
     template<typename T1, typename T2>
     struct ABC {
@@ -1193,33 +1104,34 @@ TEST(TBAAMetadataTest, TemplSpec) {
   clang::LangOptions LO;
   LO.CPlusPlus = 1;
   LO.CPlusPlus11 = 1;
-  TBAATestCompiler Compiler(LO, TBAATestCompiler::getCommonCodeGenOpts());
+  TBAATestCompiler Compiler(LO, TBAATestCompiler::getCodeGenOpts());
   Compiler.init(TestProgram);
   const BasicBlock *BB = Compiler.compile();
 
   auto SpecABC = MMTuple(
+    OmnipotentCharCXX,
+    MConstInt(16),
     MMString("_ZTS3ABCIdiE"),
     MMTuple(
-      MMString("double"),
       OmnipotentCharCXX,
-      MConstInt(0)),
+      MConstInt(8),
+      MMString("double")),
     MConstInt(0),
-    MMTuple(
-      MMString("int"),
-      OmnipotentCharCXX,
-      MConstInt(0)),
-    MConstInt(8));
+    MConstInt(8),
+    IntCXX,
+    MConstInt(8),
+    MConstInt(4));
 
   const Instruction *I = match(BB,
       MInstruction(Instruction::Store,
-        MValType(MType([](const Type &T)->bool { return T.isDoubleTy(); })),
         MMTuple(
           SpecABC,
-          MMTuple(
-            MMString("double"),
-            OmnipotentCharCXX,
-            MConstInt(0)),
-          MConstInt(0))));
+        MMTuple(
+          OmnipotentCharCXX,
+          MConstInt(8),
+          MMString("double")),
+        MConstInt(0),
+        MConstInt(8))));
   ASSERT_TRUE(I);
 
   I = matchNext(I,
@@ -1227,11 +1139,9 @@ TEST(TBAAMetadataTest, TemplSpec) {
         MConstInt(44, 32),
         MMTuple(
           SpecABC,
-          MMTuple(
-            MMString("int"),
-            OmnipotentCharCXX,
-            MConstInt(0)),
-          MConstInt(8))));
+          IntCXX,
+          MConstInt(8),
+          MConstInt(4))));
   ASSERT_TRUE(I);
 }
 }

@@ -8,6 +8,7 @@ add_clang_unittest(ClangCodeGenTests
   BufferSourceTest.cpp
   CodeGenExternalTest.cpp
   TBAAMetadataTest.cpp
+  NewStructPathTBAAMetadataTest.cpp
   CheckTargetFeaturesTest.cpp
   )
 

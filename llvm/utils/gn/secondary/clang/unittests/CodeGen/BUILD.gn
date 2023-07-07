@@ -18,5 +18,6 @@ unittest("ClangCodeGenTests") {
     "CheckTargetFeaturesTest.cpp",
     "CodeGenExternalTest.cpp",
     "TBAAMetadataTest.cpp",
+    "NewStructPathTBAAMetadataTest.cpp",
   ]
 }
